@@ -10,6 +10,7 @@ Configuration lives in `$HERMES_HOME/hwiki.json` (`$HERMES_HOME` is `~/.hermes`,
 |---|---|---|
 | `wiki_path` | | **Required.** Wiki root. `$HERMES_HOME` and `~` expand. |
 | `backend` | `fts5` | `fts5` or `qmd` (`qmd` builds a hybrid with FTS5 fallback). |
+| `language` | `en` | Query language. `cs`: Czech stopwords, one- and two-letter words dropped, and a light Czech stemmer (Dolamic & Savoy) so "Terezce", "Terezčin" and "Terezkou" all search `terezk*`. Query tokens keep non-ASCII letters in every language. |
 | `memory_dir` | `wiki/memory` | Wiki-relative folder the agent may write to. The only writable path. |
 | `untrusted_dirs` | `["raw"]` | Never indexed, recalled or readable through memory tools. |
 | `include` | `["**/*.md"]` | Root-relative globs to index. |

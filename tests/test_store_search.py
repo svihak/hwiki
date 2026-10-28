@@ -126,6 +126,38 @@ def main() -> int:
         else:
             check("no crash on hostile input", True)
 
+        print("\n[4b] Czech queries (language=cs)")
+        from hwiki.search import cs_stem  # noqa: E402
+        stems = {
+            "terezk": ["terezka", "terezky", "terezce", "terezkou", "terezčin", "terezčina"],
+            "trénink": ["tréninky", "tréninků", "tréninkem", "trénink"],
+            "škol": ["škola", "školy", "škole", "školou"],
+            "daník": ["daník", "daníka", "daníkovi"],
+            "herm": ["hermes", "herma", "hermovi"],
+            "pojistk": ["pojistka", "pojistky", "pojistce"],
+            "rozvrh": ["rozvrh", "rozvrhu"],
+            "konč": ["končí"],
+        }
+        for stem, forms in stems.items():
+            got = {f: cs_stem(f) for f in forms}
+            check(f"cs stem {stem}", all(v == stem for v in got.values()), repr(got))
+        check("en keeps diacritic words whole", build_match_query("Terezčin rozvrh") == '"terezcin"* OR "rozvrh"*',
+              build_match_query("Terezčin rozvrh"))
+        q = build_match_query("Kdy má Terezka trénink a kde je její škola?", "cs")
+        check("cs query: stopwords out, stems in", q == '"terezk"* OR "trenink"* OR "skol"*', q)
+        check("cs keeps numbers", build_match_query("rozvrh 7.A 2026", "cs") == '"rozvrh"* OR "7.a"* OR "2026"*',
+              build_match_query("rozvrh 7.A 2026", "cs"))
+        cz = tmp / "cz"
+        (cz / "wiki").mkdir(parents=True)
+        (cz / "wiki" / "zus.md").write_text("# ZUŠ Terezka\n\nTerezka hraje na trubku, pátek 13:50.\n", encoding="utf-8")
+        (cz / "wiki" / "kolace.md").write_text("# Koláče\n\nRecept na koláče.\n", encoding="utf-8")
+        czb = Fts5Backend(WikiStore(cz), tmp / "cz.sqlite", language="cs")
+        czb.sync()
+        hits = [h.path for h in czb.search("Kdy hraje Terezčina trubka?")]
+        check("cs search finds a case form", hits[:1] == ["wiki/zus.md"], repr(hits))
+        hits = [h.path for h in czb.search("Kde je škola?")]
+        check("cs search: škola no longer hits koláče", "wiki/kolace.md" not in hits, repr(hits))
+
         print("\n[5] FTS5 index + search")
         fts = Fts5Backend(store, tmp / "index.sqlite")
         check("fts5 available", fts.is_available())

@@ -276,6 +276,7 @@ class WikiMemoryProvider(MemoryProvider):
             max_hits_per_page=int(self._config.get("max_hits_per_page") or 2),
             demote_paths=list(self._config.get("demote_paths") or []),
             fetch_multiplier=int(self._config.get("fetch_multiplier") or 4),
+            language=str(self._config.get("language") or "en"),
         )
 
         try:
@@ -631,6 +632,12 @@ class WikiMemoryProvider(MemoryProvider):
                 "description": "Search backend (fts5 = stdlib, fast; qmd = hybrid semantic, needs qmd CLI)",
                 "default": "fts5",
                 "choices": ["fts5", "qmd"],
+            },
+            {
+                "key": "language",
+                "description": "Query language (cs = Czech stopwords + light stemming, so all case forms match)",
+                "default": "en",
+                "choices": ["en", "cs"],
             },
             {
                 "key": "memory_dir",

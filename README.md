@@ -123,6 +123,7 @@ hermes hwiki migrate --dry-run   # import facts from the holographic provider
 |---|---|---|
 | `wiki_path` | | Wiki root. `~` and `$HERMES_HOME` expand. |
 | `backend` | `fts5` | `fts5`, or `qmd` (hybrid with FTS5 fallback) |
+| `language` | `en` | `cs` adds Czech stopwords and light stemming of query words, so all case forms match |
 | `memory_dir` | `wiki/memory` | The only folder the agent may write to |
 | `untrusted_dirs` | `["raw"]` | Never indexed, recalled or readable |
 | `prefetch_limit` | `4` | Excerpts injected per turn |

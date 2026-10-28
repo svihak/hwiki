@@ -32,6 +32,7 @@ INDEX_FILENAME = "hwiki-index.sqlite"
 DEFAULTS: Dict[str, Any] = {
     "wiki_path": "",
     "backend": "fts5",              # fts5 | qmd  (qmd implies hybrid + fts5 fallback)
+    "language": "en",               # en | cs  (cs: Czech stopwords + light stemming of query words)
     "memory_dir": "wiki/memory",
     "untrusted_dirs": ["raw"],
     "include": ["**/*.md"],
@@ -181,5 +182,6 @@ def build_runtime(config: Optional[Dict[str, Any]] = None):
         max_hits_per_page=int(config.get("max_hits_per_page") or 2),
         demote_paths=list(config.get("demote_paths") or []),
         fetch_multiplier=int(config.get("fetch_multiplier") or 4),
+        language=str(config.get("language") or "en"),
     )
     return config, store, backend

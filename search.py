@@ -31,6 +31,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -73,25 +74,95 @@ class SearchHit:
 # FTS5
 # ---------------------------------------------------------------------------
 
-_FTS_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
+# Unicode word characters: an ASCII-only class split "Terezčin" into "terez" + "in".
+_FTS_TOKEN_RE = re.compile(r"\w[\w.\-]*")
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "is", "are",
     "was", "were", "be", "do", "does", "did", "what", "which", "who", "how",
     "why", "when", "where", "our", "we", "you", "i", "it", "this", "that",
     "with", "about", "from", "have", "has", "can", "should", "would", "please",
 }
+# Czech function words, diacritics folded (compared after _fold).
+_STOPWORDS_CS = {
+    "a", "i", "k", "o", "s", "u", "v", "z", "je", "jsou", "byl", "byla", "bylo", "se", "si",
+    "na", "do", "od", "po", "pro", "pri", "za", "ze", "jak", "co", "kdo", "kdy", "kde",
+    "proc", "ktery", "ktera", "ktere", "jaky", "jaka", "jake", "mi", "me", "mne", "muj",
+    "moje", "ma", "mam", "mame", "ten", "ta", "to", "tu", "tom", "jsem", "jsme", "nebo",
+    "ale", "aby", "tak", "uz", "jeste", "prosim", "rekni", "najdi", "vis", "mas", "nas",
+    "jeho", "jeji", "jejich", "kolik", "jestli", "nejaky", "neco", "jako", "bude", "budu",
+    "jsi", "svuj", "sve", "tebe", "nam", "vam", "jim", "ktery", "kteri", "taky", "take",
+}
 
 
-def build_match_query(query: str) -> str:
+def _fold(text: str) -> str:
+    """Strip diacritics the way FTS5 ``unicode61`` does when indexing."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+
+
+_CS_VOWELS = set("aeiouůyáéíýě")
+
+
+def cs_stem(word: str) -> str:
+    """Light Czech stemmer (Dolamic & Savoy, as in Lucene's CzechStemmer) on a lowercase word.
+
+    Strips case and possessive endings and normalises the palatalised stem end, so
+    "Terezce", "Terezčin" and "Terezkou" all give "terezk". Used for query prefixes only.
+    """
+    s = word
+
+    def ends(*suffixes: str) -> Optional[str]:
+        return next((x for x in suffixes if s.endswith(x)), None)
+
+    n = len(s)
+    if n > 7 and s.endswith("atech"):
+        s = s[:-5]
+    elif n > 6 and ends("ětem", "etem", "atům"):
+        s = s[:-4]
+    elif n > 5 and ends("ech", "ich", "ích", "ého", "ěmi", "emi", "ému", "ěte", "ěti", "iho", "ího", "ími", "imu"):
+        s = s[:-2]
+    elif n > 5 and ends("ách", "ata", "aty", "ých", "ama", "ami", "ové", "ovi", "ými"):
+        s = s[:-3]
+    elif n > 4 and s.endswith("em"):
+        s = s[:-1]
+    elif n > 4 and ends("es", "ém", "ím", "ům", "at", "ám", "os", "us", "ým", "mi", "ou"):
+        s = s[:-2]
+    elif n > 3 and s[-1] in _CS_VOWELS:
+        s = s[:-1]
+    if len(s) > 5 and ends("ov", "ův"):          # possessives
+        s = s[:-2]
+    elif len(s) > 5 and s.endswith("in"):
+        s = s[:-1]
+    if len(s) > 3 and s[-1] in _CS_VOWELS:      # vowel left by "-em" / possessive ("tréninke", "terezči")
+        s = s[:-1]
+    if len(s) < 5:                              # short stems are mostly verbs: "končí" -> "konk" would hit "konkurence"
+        return s
+    if s.endswith(("čt", "št")):
+        s = s[:-2] + ("ck" if s[-2] == "č" else "sk")
+    elif s[-1] in "cč":
+        s = s[:-1] + "k"
+    elif s[-1] in "zž":
+        s = s[:-1] + "h"
+    return s
+
+
+def build_match_query(query: str, language: str = "en") -> str:
     """Turn free text into a safe FTS5 MATCH expression.
 
     Every token is quoted (so ``:`` / ``-`` / ``.`` can't be read as FTS5
     operators — the classic injection-shaped crash) and given a prefix
     wildcard. Tokens are OR-ed so partial matches still return something.
+    With ``language="cs"`` Czech function words are dropped and every word is
+    reduced to its stem, so the prefix matches all its case forms.
     """
+    czech = language == "cs"
     tokens = [t.lower() for t in _FTS_TOKEN_RE.findall(query or "")]
-    meaningful = [t for t in tokens if t not in _STOPWORDS and len(t) > 1]
+    stop = _STOPWORDS | _STOPWORDS_CS if czech else _STOPWORDS
+    shortest = 3 if czech else 2   # Czech one- and two-letter words are prepositions and conjunctions
+    meaningful = [t for t in tokens if _fold(t) not in stop and (len(t) >= shortest or any(c.isdigit() for c in t))]
     chosen = (meaningful or tokens)[:12]
+    if czech:
+        chosen = [cs_stem(t) if len(cs_stem(t)) >= 3 and not any(c.isdigit() for c in t) else t for t in chosen]
+    chosen = list(dict.fromkeys(_fold(t) for t in chosen))
     if not chosen:
         return ""
     return " OR ".join(f'"{t}"*' for t in chosen)
@@ -102,9 +173,10 @@ class Fts5Backend:
 
     name = "fts5"
 
-    def __init__(self, store: WikiStore, db_path: os.PathLike | str) -> None:
+    def __init__(self, store: WikiStore, db_path: os.PathLike | str, language: str = "en") -> None:
         self.store = store
         self.db_path = Path(db_path)
+        self.language = language
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.RLock()
         self._last_sync = 0.0
@@ -226,7 +298,7 @@ class Fts5Backend:
     # -- query -------------------------------------------------------------
 
     def search(self, query: str, *, limit: int = 6, spine: str = "") -> List[SearchHit]:
-        match = build_match_query(query)
+        match = build_match_query(query, self.language)
         if not match:
             return []
         conn = self._connect()
@@ -669,6 +741,7 @@ def build_backend(
     max_hits_per_page: int = 2,
     demote_paths: Optional[Sequence[str]] = None,
     fetch_multiplier: int = 4,
+    language: str = "en",
 ):
     """Construct the configured backend, degrading to FTS5 when qmd is absent.
 
@@ -681,7 +754,7 @@ def build_backend(
     Every layer is wrapped so the provider, CLI and bench treat the result
     identically (same ``SearchHit`` interface).
     """
-    fts = Fts5Backend(store, db_path)
+    fts = Fts5Backend(store, db_path, language=language)
     wanted = (backend or "fts5").lower()
     if wanted == "fts5":
         core = fts
